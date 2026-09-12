@@ -1,0 +1,359 @@
+// LLMO / AIO Monitoring Platform - Prisma Schema
+// Phase 1 MVP
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// 組織 / ブランド / 店舗 階層
+// ========================================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  brands Brand[]
+
+  @@map("organizations")
+}
+
+model Brand {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  locations    Location[]
+
+  @@map("brands")
+}
+
+model Location {
+  id                   String   @id @default(cuid())
+  brandId              String
+  name                 String   // 店舗名（表示用）
+  officialName         String?  // 正式名称
+  url                  String?
+  address              String?
+  prefecture           String?
+  city                 String?
+  lat                  Float?
+  lng                  Float?
+  googleBusinessUrl    String?
+  googleMapUrl         String?
+  phone                String?
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  brand        Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  aliases      LocationAlias[]
+  measurements Measurement[]
+  scores       LlmoScore[]
+  actions      Action[]
+
+  @@map("locations")
+}
+
+model LocationAlias {
+  id         String   @id @default(cuid())
+  locationId String
+  alias      String
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("location_aliases")
+}
+
+// ========================================
+// AIプロバイダー
+// ========================================
+
+enum ProviderType {
+  GEMINI
+  OPENAI
+  PERPLEXITY
+  GOOGLE_AIO
+  GOOGLE_AI_MODE
+}
+
+model Provider {
+  id        String       @id @default(cuid())
+  type      ProviderType @unique
+  name      String
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  measurements Measurement[]
+
+  @@map("providers")
+}
+
+// ========================================
+// プロンプト / キーワード管理
+// ========================================
+
+enum SearchIntent {
+  STORE_SEARCH      // 店舗検索
+  SYMPTOM_SEARCH    // 症状検索
+  COMPARISON_SEARCH // 比較検索
+  BRAND_SEARCH      // ブランド検索
+  GENERAL           // 汎用
+}
+
+enum Funnel {
+  AWARENESS
+  CONSIDERATION
+  DECISION
+}
+
+enum MeasurementFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Prompt {
+  id          String               @id @default(cuid())
+  text        String               // プロンプトテキスト
+  region      String?              // 地域
+  symptom     String?              // 症状
+  intent      SearchIntent         @default(GENERAL)
+  funnel      Funnel?
+  category    String?
+  importance  Int                  @default(3) // 1-5
+  frequency   MeasurementFrequency @default(WEEKLY)
+  isActive    Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  measurements Measurement[]
+
+  @@map("prompts")
+}
+
+// ========================================
+// 計測 / AI回答
+// ========================================
+
+enum VisibilityStatus {
+  NOT_MENTIONED
+  MENTIONED
+  RECOMMENDED
+  STRONGLY_RECOMMENDED
+}
+
+model Measurement {
+  id             String           @id @default(cuid())
+  locationId     String
+  promptId       String
+  providerId     String
+  model          String?
+  rawResponse    String           @db.Text
+  visibility     VisibilityStatus @default(NOT_MENTIONED)
+  rank           Int?             // 何番目に紹介されたか
+  totalResults   Int?             // 回答中の総店舗数
+  rankScore      Float?           // 順位スコア (1位=100, 2位=80...)
+  sentimentScore Float?           // -100 ~ +100
+  shareOfVoice   Float?           // AI Share of Voice (%)
+  runCount       Int              @default(1) // 再現性対策: 実行回数
+  hitCount       Int              @default(0) // 表示された回数
+  createdAt      DateTime         @default(now())
+
+  location    Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  prompt      Prompt       @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  provider    Provider     @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  citations         Citation[]
+  competitorMentions CompetitorMention[]
+  sentimentDetails  SentimentDetail[]
+
+  @@index([locationId, createdAt])
+  @@index([promptId, createdAt])
+  @@map("measurements")
+}
+
+// ========================================
+// Citation（引用ソース）
+// ========================================
+
+enum CitationType {
+  OFFICIAL
+  GOOGLE_BUSINESS_PROFILE
+  PORTAL
+  MEDIA
+  REVIEW
+  SNS
+  COMPETITOR
+  OTHER
+}
+
+model Citation {
+  id            String      @id @default(cuid())
+  measurementId String
+  url           String
+  domain        String
+  title         String?
+  type          CitationType @default(OTHER)
+  isOfficial    Boolean     @default(false)
+  isCompetitor  Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  measurement Measurement @relation(fields: [measurementId], references: [id], onDelete: Cascade)
+
+  @@map("citations")
+}
+
+// ========================================
+// 競合
+// ========================================
+
+model Competitor {
+  id            String   @id @default(cuid())
+  name          String
+  url           String?
+  region        String?
+  category      String?
+  isConfirmed   Boolean  @default(false) // AI回答から自動抽出→手動確認
+  mentionCount  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  mentions CompetitorMention[]
+
+  @@map("competitors")
+}
+
+model CompetitorMention {
+  id            String   @id @default(cuid())
+  measurementId String
+  competitorId  String
+  rank          Int?
+  sentimentScore Float?
+  createdAt     DateTime @default(now())
+
+  measurement Measurement @relation(fields: [measurementId], references: [id], onDelete: Cascade)
+  competitor  Competitor  @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@map("competitor_mentions")
+}
+
+// ========================================
+// Sentiment（感情分析）
+// ========================================
+
+enum SentimentCategory {
+  TECHNOLOGY    // 技術
+  PRICE         // 料金
+  REVIEW        // 口コミ
+  ACCESS        // アクセス
+  SERVICE       // 接客
+  RESERVATION   // 予約
+  FACILITY      // 設備
+  EXPERTISE     // 専門性
+  RELIABILITY   // 安心感
+}
+
+enum SentimentPolarity {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model SentimentDetail {
+  id            String            @id @default(cuid())
+  measurementId String
+  category      SentimentCategory
+  polarity      SentimentPolarity
+  excerpt       String?           @db.Text
+  score         Float             // -100 ~ +100
+  createdAt     DateTime          @default(now())
+
+  measurement Measurement @relation(fields: [measurementId], references: [id], onDelete: Cascade)
+
+  @@map("sentiment_details")
+}
+
+// ========================================
+// LLMOスコア（集計）
+// ========================================
+
+model LlmoScore {
+  id                   String   @id @default(cuid())
+  locationId           String
+  date                 DateTime @db.Date
+  visibilityScore      Float    @default(0) // 30点満点
+  rankScore            Float    @default(0) // 20点満点
+  shareOfVoiceScore    Float    @default(0) // 15点満点
+  citationScore        Float    @default(0) // 15点満点
+  sentimentScore       Float    @default(0) // 10点満点
+  officialCitationScore Float   @default(0) // 10点満点
+  totalScore           Float    @default(0) // 0-100
+  visibilityRate       Float    @default(0) // 表示率 %
+  avgRank              Float?   // 平均順位
+  shareOfVoice         Float    @default(0) // SOV %
+  createdAt            DateTime @default(now())
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, date])
+  @@index([locationId, date])
+  @@map("llmo_scores")
+}
+
+// ========================================
+// 改善施策管理
+// ========================================
+
+enum ActionStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Action {
+  id          String       @id @default(cuid())
+  locationId  String
+  title       String
+  description String?      @db.Text
+  status      ActionStatus @default(PLANNED)
+  plannedAt   DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("actions")
+}
+
+// ========================================
+// APIコスト管理
+// ========================================
+
+model ApiCost {
+  id           String       @id @default(cuid())
+  providerType ProviderType
+  date         DateTime     @db.Date
+  requestCount Int          @default(0)
+  tokenCount   Int          @default(0)
+  costUsd      Float        @default(0)
+  createdAt    DateTime     @default(now())
+
+  @@unique([providerType, date])
+  @@map("api_costs")
+}
