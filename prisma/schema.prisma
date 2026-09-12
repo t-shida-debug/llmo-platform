@@ -222,7 +222,7 @@ model Citation {
 
 model Competitor {
   id            String   @id @default(cuid())
-  name          String
+    name          String   @unique
   url           String?
   region        String?
   category      String?
