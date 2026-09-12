@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       measurementId: string;
       visibility: string;
       rank: number | null;
-      sentimentScore: number;
+      sentimentScore: number | null;
     }> = [];
 
     let hitCount = 0;
